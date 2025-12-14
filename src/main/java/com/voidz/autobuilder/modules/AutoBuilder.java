@@ -3,21 +3,27 @@ package com.voidz.autobuilder.modules;
 import com.voidz.autobuilder.AutoBuilderAddon;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WCheckbox;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
-import meteordevelopment.meteorclient.utils.player.PlayerUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.BlockItem;
+import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
@@ -26,38 +32,50 @@ import java.util.List;
 
 public class AutoBuilder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgGrid = settings.createGroup("Build Grid");
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    // General Settings
-    private final Setting<Integer> placementSpeed = sgGeneral.add(new IntSetting.Builder()
-        .name("placement-speed")
-        .description("Blocks placed per tick.")
-        .defaultValue(1)
-        .min(1)
-        .sliderRange(1, 10)
+    private final Setting<List<Block>> blocksToUse = sgGeneral.add(new BlockListSetting.Builder()
+        .name("blocks")
+        .description("Blocks to use for building.")
+        .defaultValue(Blocks.OBSIDIAN)
         .build()
     );
 
-    private final Setting<Boolean> airPlace = sgGeneral.add(new BoolSetting.Builder()
-        .name("air-place")
-        .description("Allow placing blocks in air without support.")
-        .defaultValue(false)
+    private final Setting<Integer> delayMs = sgGeneral.add(new IntSetting.Builder()
+        .name("delay-ms")
+        .description("Delay between block placements in milliseconds.")
+        .defaultValue(50)
+        .min(0)
+        .sliderRange(0, 500)
         .build()
     );
 
     private final Setting<Double> placeRange = sgGeneral.add(new DoubleSetting.Builder()
-        .name("place-range")
-        .description("Range for placing blocks.")
+        .name("range")
+        .description("Max placement range.")
         .defaultValue(4.5)
         .range(0, 7)
         .sliderRange(0, 7)
         .build()
     );
 
+    private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
+        .name("rotate")
+        .description("Rotate to face the block when placing.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> airPlace = sgGeneral.add(new BoolSetting.Builder()
+        .name("air-place")
+        .description("Place blocks in air without support (Grim bypass).")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Integer> offsetX = sgGeneral.add(new IntSetting.Builder()
         .name("offset-x")
-        .description("X offset from player position.")
+        .description("X offset from player.")
         .defaultValue(0)
         .sliderRange(-10, 10)
         .build()
@@ -65,7 +83,7 @@ public class AutoBuilder extends Module {
 
     private final Setting<Integer> offsetY = sgGeneral.add(new IntSetting.Builder()
         .name("offset-y")
-        .description("Y offset from player position.")
+        .description("Y offset from player.")
         .defaultValue(0)
         .sliderRange(-10, 10)
         .build()
@@ -73,137 +91,164 @@ public class AutoBuilder extends Module {
 
     private final Setting<Integer> offsetZ = sgGeneral.add(new IntSetting.Builder()
         .name("offset-z")
-        .description("Z offset from player position.")
+        .description("Z offset from player.")
         .defaultValue(0)
         .sliderRange(-10, 10)
         .build()
     );
 
-    private final Setting<List<Block>> blocksToUse = sgGeneral.add(new BlockListSetting.Builder()
-        .name("blocks-to-use")
-        .description("Blocks to use for building.")
-        .defaultValue(Blocks.OBSIDIAN)
-        .build()
-    );
-
-    // 6x6 Grid Settings (36 toggles)
-    private final Setting<Boolean> grid00 = sgGrid.add(new BoolSetting.Builder().name("grid-0-0").defaultValue(false).build());
-    private final Setting<Boolean> grid01 = sgGrid.add(new BoolSetting.Builder().name("grid-0-1").defaultValue(false).build());
-    private final Setting<Boolean> grid02 = sgGrid.add(new BoolSetting.Builder().name("grid-0-2").defaultValue(false).build());
-    private final Setting<Boolean> grid03 = sgGrid.add(new BoolSetting.Builder().name("grid-0-3").defaultValue(false).build());
-    private final Setting<Boolean> grid04 = sgGrid.add(new BoolSetting.Builder().name("grid-0-4").defaultValue(false).build());
-    private final Setting<Boolean> grid05 = sgGrid.add(new BoolSetting.Builder().name("grid-0-5").defaultValue(false).build());
-
-    private final Setting<Boolean> grid10 = sgGrid.add(new BoolSetting.Builder().name("grid-1-0").defaultValue(false).build());
-    private final Setting<Boolean> grid11 = sgGrid.add(new BoolSetting.Builder().name("grid-1-1").defaultValue(false).build());
-    private final Setting<Boolean> grid12 = sgGrid.add(new BoolSetting.Builder().name("grid-1-2").defaultValue(false).build());
-    private final Setting<Boolean> grid13 = sgGrid.add(new BoolSetting.Builder().name("grid-1-3").defaultValue(false).build());
-    private final Setting<Boolean> grid14 = sgGrid.add(new BoolSetting.Builder().name("grid-1-4").defaultValue(false).build());
-    private final Setting<Boolean> grid15 = sgGrid.add(new BoolSetting.Builder().name("grid-1-5").defaultValue(false).build());
-
-    private final Setting<Boolean> grid20 = sgGrid.add(new BoolSetting.Builder().name("grid-2-0").defaultValue(false).build());
-    private final Setting<Boolean> grid21 = sgGrid.add(new BoolSetting.Builder().name("grid-2-1").defaultValue(false).build());
-    private final Setting<Boolean> grid22 = sgGrid.add(new BoolSetting.Builder().name("grid-2-2").defaultValue(false).build());
-    private final Setting<Boolean> grid23 = sgGrid.add(new BoolSetting.Builder().name("grid-2-3").defaultValue(false).build());
-    private final Setting<Boolean> grid24 = sgGrid.add(new BoolSetting.Builder().name("grid-2-4").defaultValue(false).build());
-    private final Setting<Boolean> grid25 = sgGrid.add(new BoolSetting.Builder().name("grid-2-5").defaultValue(false).build());
-
-    private final Setting<Boolean> grid30 = sgGrid.add(new BoolSetting.Builder().name("grid-3-0").defaultValue(false).build());
-    private final Setting<Boolean> grid31 = sgGrid.add(new BoolSetting.Builder().name("grid-3-1").defaultValue(false).build());
-    private final Setting<Boolean> grid32 = sgGrid.add(new BoolSetting.Builder().name("grid-3-2").defaultValue(false).build());
-    private final Setting<Boolean> grid33 = sgGrid.add(new BoolSetting.Builder().name("grid-3-3").defaultValue(false).build());
-    private final Setting<Boolean> grid34 = sgGrid.add(new BoolSetting.Builder().name("grid-3-4").defaultValue(false).build());
-    private final Setting<Boolean> grid35 = sgGrid.add(new BoolSetting.Builder().name("grid-3-5").defaultValue(false).build());
-
-    private final Setting<Boolean> grid40 = sgGrid.add(new BoolSetting.Builder().name("grid-4-0").defaultValue(false).build());
-    private final Setting<Boolean> grid41 = sgGrid.add(new BoolSetting.Builder().name("grid-4-1").defaultValue(false).build());
-    private final Setting<Boolean> grid42 = sgGrid.add(new BoolSetting.Builder().name("grid-4-2").defaultValue(false).build());
-    private final Setting<Boolean> grid43 = sgGrid.add(new BoolSetting.Builder().name("grid-4-3").defaultValue(false).build());
-    private final Setting<Boolean> grid44 = sgGrid.add(new BoolSetting.Builder().name("grid-4-4").defaultValue(false).build());
-    private final Setting<Boolean> grid45 = sgGrid.add(new BoolSetting.Builder().name("grid-4-5").defaultValue(false).build());
-
-    private final Setting<Boolean> grid50 = sgGrid.add(new BoolSetting.Builder().name("grid-5-0").defaultValue(false).build());
-    private final Setting<Boolean> grid51 = sgGrid.add(new BoolSetting.Builder().name("grid-5-1").defaultValue(false).build());
-    private final Setting<Boolean> grid52 = sgGrid.add(new BoolSetting.Builder().name("grid-5-2").defaultValue(false).build());
-    private final Setting<Boolean> grid53 = sgGrid.add(new BoolSetting.Builder().name("grid-5-3").defaultValue(false).build());
-    private final Setting<Boolean> grid54 = sgGrid.add(new BoolSetting.Builder().name("grid-5-4").defaultValue(false).build());
-    private final Setting<Boolean> grid55 = sgGrid.add(new BoolSetting.Builder().name("grid-5-5").defaultValue(false).build());
-
-    // Render Settings
+    // Render
     private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
         .name("render")
-        .description("Render block placement preview.")
+        .description("Render preview.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
-        .description("How the shapes are rendered.")
         .defaultValue(ShapeMode.Both)
         .build()
     );
 
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
         .name("side-color")
-        .description("Side color of render.")
         .defaultValue(new SettingColor(138, 43, 226, 50))
         .build()
     );
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color")
-        .description("Line color of render.")
         .defaultValue(new SettingColor(138, 43, 226, 255))
         .build()
     );
 
-    private final Setting<Boolean>[][] gridSettings = new Setting[6][6];
-    private int tickCounter = 0;
+    // 5x5 Grid - vertical: X is horizontal, Y is vertical (row 0 = top)
+    private final boolean[][] grid = new boolean[5][5];
+    private long lastPlaceTime = 0;
+    private int currentIndex = 0;
 
     public AutoBuilder() {
-        super(AutoBuilderAddon.CATEGORY, "auto-builder", "Automatically builds patterns based on a 6x6 grid. Made for 2b2t.");
-        initGridSettings();
+        super(AutoBuilderAddon.CATEGORY, "auto-builder", "Builds vertical 5x5 patterns. Made for 2b2t.");
     }
 
-    private void initGridSettings() {
-        gridSettings[0][0] = grid00; gridSettings[0][1] = grid01; gridSettings[0][2] = grid02;
-        gridSettings[0][3] = grid03; gridSettings[0][4] = grid04; gridSettings[0][5] = grid05;
-        gridSettings[1][0] = grid10; gridSettings[1][1] = grid11; gridSettings[1][2] = grid12;
-        gridSettings[1][3] = grid13; gridSettings[1][4] = grid14; gridSettings[1][5] = grid15;
-        gridSettings[2][0] = grid20; gridSettings[2][1] = grid21; gridSettings[2][2] = grid22;
-        gridSettings[2][3] = grid23; gridSettings[2][4] = grid24; gridSettings[2][5] = grid25;
-        gridSettings[3][0] = grid30; gridSettings[3][1] = grid31; gridSettings[3][2] = grid32;
-        gridSettings[3][3] = grid33; gridSettings[3][4] = grid34; gridSettings[3][5] = grid35;
-        gridSettings[4][0] = grid40; gridSettings[4][1] = grid41; gridSettings[4][2] = grid42;
-        gridSettings[4][3] = grid43; gridSettings[4][4] = grid44; gridSettings[4][5] = grid45;
-        gridSettings[5][0] = grid50; gridSettings[5][1] = grid51; gridSettings[5][2] = grid52;
-        gridSettings[5][3] = grid53; gridSettings[5][4] = grid54; gridSettings[5][5] = grid55;
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WVerticalList list = theme.verticalList();
+        WTable table = theme.table();
+        list.add(table);
+
+        for (int row = 0; row < 5; row++) {
+            for (int col = 0; col < 5; col++) {
+                final int r = row;
+                final int c = col;
+                WCheckbox checkbox = table.add(theme.checkbox(grid[r][c])).widget();
+                checkbox.action = () -> grid[r][c] = checkbox.checked;
+            }
+            table.row();
+        }
+
+        return list;
     }
 
+    @Override
+    public void onActivate() {
+        lastPlaceTime = 0;
+        currentIndex = 0;
+    }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
 
-        List<BlockPos> toPlace = getBlocksToPlace();
-        int placed = 0;
+        long now = System.currentTimeMillis();
+        if (now - lastPlaceTime < delayMs.get()) return;
 
-        for (BlockPos pos : toPlace) {
-            if (placed >= placementSpeed.get()) break;
+        List<BlockPos> positions = getBlocksToPlace();
+        if (positions.isEmpty()) return;
 
-            if (!isInRange(pos)) continue;
-            if (!mc.world.getBlockState(pos).isReplaceable()) continue;
+        // Find next block that needs placing
+        while (currentIndex < positions.size()) {
+            BlockPos pos = positions.get(currentIndex);
 
-            FindItemResult block = findBlock();
-            if (!block.found()) continue;
+            if (mc.world.getBlockState(pos).isReplaceable() && isInRange(pos)) {
+                FindItemResult block = findBlock();
+                if (block.found()) {
+                    // Swap to the block
+                    InvUtils.swap(block.slot(), false);
+                    
+                    // Rotate to the block position
+                    if (rotate.get()) {
+                        Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), 100, () -> placeBlockAt(pos));
+                    } else {
+                        placeBlockAt(pos);
+                    }
+                    
+                    lastPlaceTime = now;
+                    currentIndex++;
+                    return; // Only place 1 block per tick cycle
+                }
+            }
+            currentIndex++;
+        }
 
-            if (airPlace.get()) {
-                if (placeBlock(pos, block)) placed++;
-            } else {
-                if (BlockUtils.place(pos, block, true, 0, true, true)) placed++;
+        if (currentIndex >= positions.size()) {
+            currentIndex = 0;
+        }
+    }
+
+    private void placeBlockAt(BlockPos pos) {
+        if (mc.player == null || mc.interactionManager == null || mc.world == null) return;
+
+        // Try to find a support block first for normal placement
+        Direction[] directions = {Direction.DOWN, Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
+
+        for (Direction dir : directions) {
+            BlockPos neighbor = pos.offset(dir);
+            if (!mc.world.getBlockState(neighbor).isReplaceable()) {
+                // Place against this solid neighbor using Grim bypass method
+                Vec3d hitVec = Vec3d.ofCenter(neighbor).add(
+                    dir.getOpposite().getOffsetX() * 0.5,
+                    dir.getOpposite().getOffsetY() * 0.5,
+                    dir.getOpposite().getOffsetZ() * 0.5
+                );
+                BlockHitResult bhr = new BlockHitResult(hitVec, dir.getOpposite(), neighbor, false);
+                grimPlace(bhr);
+                return;
             }
         }
+
+        // No support block found - airplace using Grim bypass (if enabled)
+        if (!airPlace.get()) return;
+        
+        Vec3d hitPos = Vec3d.ofCenter(pos);
+        BlockHitResult bhr = new BlockHitResult(hitPos, Direction.UP, pos, false);
+        grimPlace(bhr);
+    }
+
+    private void grimPlace(BlockHitResult blockHitResult) {
+        if (mc.player == null) return;
+
+        // Grim bypass: swap to offhand, place with offhand, swap back
+        mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+            PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, 
+            new BlockPos(0, 0, 0), 
+            Direction.DOWN
+        ));
+
+        mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(
+            Hand.OFF_HAND, 
+            blockHitResult, 
+            mc.player.currentScreenHandler.getRevision() + 2
+        ));
+
+        mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+            PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, 
+            new BlockPos(0, 0, 0), 
+            Direction.DOWN
+        ));
+
+        mc.player.swingHand(Hand.MAIN_HAND);
     }
 
     private List<BlockPos> getBlocksToPlace() {
@@ -212,13 +257,13 @@ public class AutoBuilder extends Module {
 
         BlockPos playerPos = mc.player.getBlockPos();
         int baseX = playerPos.getX() + offsetX.get() - 2;
-        int baseY = playerPos.getY() + offsetY.get();
-        int baseZ = playerPos.getZ() + offsetZ.get() - 2;
+        int baseY = playerPos.getY() + offsetY.get() + 2;
+        int baseZ = playerPos.getZ() + offsetZ.get();
 
-        for (int row = 0; row < 6; row++) {
-            for (int col = 0; col < 6; col++) {
-                if (gridSettings[row][col].get()) {
-                    positions.add(new BlockPos(baseX + col, baseY, baseZ + row));
+        for (int row = 0; row < 5; row++) {
+            for (int col = 0; col < 5; col++) {
+                if (grid[row][col]) {
+                    positions.add(new BlockPos(baseX + col, baseY - row, baseZ));
                 }
             }
         }
@@ -228,9 +273,7 @@ public class AutoBuilder extends Module {
 
     private boolean isInRange(BlockPos pos) {
         if (mc.player == null) return false;
-        Vec3d playerPos = mc.player.getEyePos();
-        Vec3d blockCenter = Vec3d.ofCenter(pos);
-        return playerPos.distanceTo(blockCenter) <= placeRange.get();
+        return mc.player.getEyePos().distanceTo(Vec3d.ofCenter(pos)) <= placeRange.get();
     }
 
     private FindItemResult findBlock() {
@@ -240,33 +283,12 @@ public class AutoBuilder extends Module {
         });
     }
 
-    private boolean placeBlock(BlockPos pos, FindItemResult block) {
-        if (mc.player == null || mc.interactionManager == null || mc.world == null) return false;
-
-        InvUtils.swap(block.slot(), false);
-
-        mc.interactionManager.interactBlock(
-            mc.player,
-            Hand.MAIN_HAND,
-            new net.minecraft.util.hit.BlockHitResult(
-                Vec3d.ofCenter(pos),
-                Direction.UP,
-                pos,
-                false
-            )
-        );
-
-        return true;
-    }
-
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (!render.get()) return;
+        if (!render.get() || mc.player == null || mc.world == null) return;
 
-        List<BlockPos> toPlace = getBlocksToPlace();
-
-        for (BlockPos pos : toPlace) {
-            if (mc.world != null && mc.world.getBlockState(pos).isReplaceable()) {
+        for (BlockPos pos : getBlocksToPlace()) {
+            if (mc.world.getBlockState(pos).isReplaceable()) {
                 event.renderer.box(pos, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
             }
         }
