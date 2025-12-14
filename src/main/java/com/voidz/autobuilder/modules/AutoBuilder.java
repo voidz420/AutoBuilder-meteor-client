@@ -231,14 +231,25 @@ public class AutoBuilder extends Module {
             if (mc.world.getBlockState(pos).isReplaceable() && isInRange(pos)) {
                 FindItemResult block = findBlock();
                 if (block.found()) {
+                    // Temporarily disable timer for placement (including rotation)
+                    Timer timer = Modules.get().get(Timer.class);
+                    boolean wasFloating = floating.get() && timer != null;
+                    if (wasFloating) {
+                        timer.setOverride(Timer.OFF);
+                    }
+                    
                     // Swap to the block
                     InvUtils.swap(block.slot(), false);
                     
-                    // Rotate to the block position
+                    // Place directly without rotation callback delay
                     if (rotate.get()) {
-                        Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), 100, () -> placeBlockAt(pos));
-                    } else {
-                        placeBlockAt(pos);
+                        Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), 100, true, () -> {});
+                    }
+                    placeBlockAt(pos);
+                    
+                    // Re-enable timer after placement
+                    if (wasFloating) {
+                        timer.setOverride(0.01);
                     }
                     
                     lastPlaceTime = now;
@@ -295,13 +306,6 @@ public class AutoBuilder extends Module {
     private void grimPlace(BlockHitResult blockHitResult) {
         if (mc.player == null) return;
 
-        // Temporarily disable timer for placement packets
-        Timer timer = Modules.get().get(Timer.class);
-        boolean wasFloating = floating.get() && timer != null;
-        if (wasFloating) {
-            timer.setOverride(Timer.OFF);
-        }
-
         // Grim bypass: swap to offhand, place with offhand, swap back
         mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
             PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, 
@@ -322,11 +326,6 @@ public class AutoBuilder extends Module {
         ));
 
         mc.player.swingHand(Hand.MAIN_HAND);
-
-        // Re-enable timer after placement
-        if (wasFloating) {
-            timer.setOverride(0.01);
-        }
     }
 
     private List<BlockPos> getBlocksToPlace() {
