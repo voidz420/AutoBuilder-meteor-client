@@ -211,6 +211,11 @@ public class AutoBuilder extends Module {
         // Auto-disable check
         List<BlockPos> positions = getBlocksToPlace();
         if (!positions.isEmpty() && autoDisable.get() && allBlocksPlaced(positions)) {
+            // Disable timer before toggling so it happens instantly
+            Timer timer = Modules.get().get(Timer.class);
+            if (timer != null) {
+                timer.setOverride(Timer.OFF);
+            }
             toggle();
         }
     }
