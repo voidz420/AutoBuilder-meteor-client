@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "autobuilder",
+  "version": "${version}",
+  "name": "AutoBuilder",
+  "description": "Automated building addon for Meteor Client - 2b2t utility",
+  "authors": [
+    "voidz420"
+  ],
+  "contact": {
+    "repo": "https://github.com/voidz420/AutoBuilder-meteor-client"
+  },
+  "icon": "assets/autobuilder/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "meteor": [
+      "com.voidz.autobuilder.AutoBuilderAddon"
+    ]
+  },
+  "mixins": [
+    "autobuilder.mixins.json"
+  ],
+  "custom": {
+    "meteor-client:color": "138,43,226"
+  },
+  "depends": {
+    "java": ">=21",
+    "minecraft": ["${mc_version}"],
+    "meteor-client": "*"
+  }
+}
