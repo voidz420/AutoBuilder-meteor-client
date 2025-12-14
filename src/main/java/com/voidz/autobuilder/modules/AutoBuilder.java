@@ -1,8 +1,8 @@
 package com.voidz.autobuilder.modules;
 
 import com.voidz.autobuilder.AutoBuilderAddon;
+import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
@@ -11,6 +11,8 @@ import meteordevelopment.meteorclient.gui.widgets.pressable.WCheckbox;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.world.Timer;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
@@ -73,6 +75,27 @@ public class AutoBuilder extends Module {
         .build()
     );
 
+    private final Setting<Boolean> floating = sgGeneral.add(new BoolSetting.Builder()
+        .name("floating")
+        .description("Slow down time to float in place while building.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> autoDisable = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-disable")
+        .description("Automatically disable when all blocks are placed.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoOrientation = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-orientation")
+        .description("Build faces the direction you're looking at when activated.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Integer> offsetX = sgGeneral.add(new IntSetting.Builder()
         .name("offset-x")
         .description("X offset from player.")
@@ -127,6 +150,7 @@ public class AutoBuilder extends Module {
     private final boolean[][] grid = new boolean[5][5];
     private long lastPlaceTime = 0;
     private int currentIndex = 0;
+    private Direction buildDirection = Direction.NORTH;
 
     public AutoBuilder() {
         super(AutoBuilderAddon.CATEGORY, "auto-builder", "Builds vertical 5x5 patterns. Made for 2b2t.");
@@ -155,10 +179,43 @@ public class AutoBuilder extends Module {
     public void onActivate() {
         lastPlaceTime = 0;
         currentIndex = 0;
+        
+        // Set build direction based on player facing
+        if (autoOrientation.get() && mc.player != null) {
+            buildDirection = mc.player.getHorizontalFacing();
+        }
+        
+        if (floating.get()) {
+            Timer timer = Modules.get().get(Timer.class);
+            if (timer != null) {
+                timer.setOverride(0.01);
+            }
+        }
+    }
+
+    @Override
+    public void onDeactivate() {
+        Timer timer = Modules.get().get(Timer.class);
+        if (timer != null) {
+            timer.setOverride(Timer.OFF);
+        }
     }
 
     @EventHandler
-    private void onTick(TickEvent.Pre event) {
+    private void onPlayerMove(PlayerMoveEvent event) {
+        if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
+
+        // Try placing on every move event for faster placement
+        tryPlace();
+        
+        // Auto-disable check
+        List<BlockPos> positions = getBlocksToPlace();
+        if (!positions.isEmpty() && autoDisable.get() && allBlocksPlaced(positions)) {
+            toggle();
+        }
+    }
+
+    private void tryPlace() {
         if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
 
         long now = System.currentTimeMillis();
@@ -186,7 +243,7 @@ public class AutoBuilder extends Module {
                     
                     lastPlaceTime = now;
                     currentIndex++;
-                    return; // Only place 1 block per tick cycle
+                    return; // Only place 1 block per cycle
                 }
             }
             currentIndex++;
@@ -195,6 +252,15 @@ public class AutoBuilder extends Module {
         if (currentIndex >= positions.size()) {
             currentIndex = 0;
         }
+    }
+
+    private boolean allBlocksPlaced(List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            if (mc.world.getBlockState(pos).isReplaceable()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void placeBlockAt(BlockPos pos) {
@@ -229,6 +295,13 @@ public class AutoBuilder extends Module {
     private void grimPlace(BlockHitResult blockHitResult) {
         if (mc.player == null) return;
 
+        // Temporarily disable timer for placement packets
+        Timer timer = Modules.get().get(Timer.class);
+        boolean wasFloating = floating.get() && timer != null;
+        if (wasFloating) {
+            timer.setOverride(Timer.OFF);
+        }
+
         // Grim bypass: swap to offhand, place with offhand, swap back
         mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
             PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, 
@@ -249,6 +322,11 @@ public class AutoBuilder extends Module {
         ));
 
         mc.player.swingHand(Hand.MAIN_HAND);
+
+        // Re-enable timer after placement
+        if (wasFloating) {
+            timer.setOverride(0.01);
+        }
     }
 
     private List<BlockPos> getBlocksToPlace() {
@@ -256,14 +334,34 @@ public class AutoBuilder extends Module {
         if (mc.player == null) return positions;
 
         BlockPos playerPos = mc.player.getBlockPos();
-        int baseX = playerPos.getX() + offsetX.get() - 2;
         int baseY = playerPos.getY() + offsetY.get() + 2;
-        int baseZ = playerPos.getZ() + offsetZ.get();
 
         for (int row = 0; row < 5; row++) {
             for (int col = 0; col < 5; col++) {
                 if (grid[row][col]) {
-                    positions.add(new BlockPos(baseX + col, baseY - row, baseZ));
+                    int y = baseY - row;
+                    int horizontalOffset = col - 2; // -2 to +2 for 5x5 grid centered
+                    
+                    int x = playerPos.getX() + offsetX.get();
+                    int z = playerPos.getZ() + offsetZ.get();
+                    
+                    // Apply orientation based on build direction
+                    switch (buildDirection) {
+                        case NORTH -> z += -1; // Build in front (negative Z)
+                        case SOUTH -> z += 1;  // Build in front (positive Z)
+                        case EAST -> x += 1;   // Build in front (positive X)
+                        case WEST -> x += -1;  // Build in front (negative X)
+                        default -> z += -1;
+                    }
+                    
+                    // Apply horizontal offset perpendicular to facing direction
+                    switch (buildDirection) {
+                        case NORTH, SOUTH -> x += horizontalOffset;
+                        case EAST, WEST -> z += horizontalOffset;
+                        default -> x += horizontalOffset;
+                    }
+                    
+                    positions.add(new BlockPos(x, y, z));
                 }
             }
         }
@@ -285,6 +383,9 @@ public class AutoBuilder extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
+        // Try to place blocks every frame (not just per tick) for faster placement
+        tryPlace();
+        
         if (!render.get() || mc.player == null || mc.world == null) return;
 
         for (BlockPos pos : getBlocksToPlace()) {
