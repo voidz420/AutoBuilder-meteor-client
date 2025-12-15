@@ -1,6 +1,6 @@
 # AutoBuilder - Meteor Client Addon
 
-A Meteor Client addon for Minecraft 1.21.5 designed for automated building on anarchy servers like 2b2t.
+A Meteor Client addon for Minecraft 1.21.8 designed for automated building on anarchy servers like 2b2t.
 
 ## Features
 
@@ -14,7 +14,7 @@ A Meteor Client addon for Minecraft 1.21.5 designed for automated building on an
 
 ## Installation
 
-1. Install [Meteor Client](https://meteorclient.com/) for Minecraft 1.21.5
+1. Install [Meteor Client](https://meteorclient.com/) for Minecraft 1.21.8
 2. Download the latest release JAR
 3. Place the JAR in your `.minecraft/mods` folder
 4. Launch Minecraft with Fabric
