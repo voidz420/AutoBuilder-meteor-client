@@ -33,8 +33,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class AutoBuilder extends Module {
+    public enum BuildMode {
+        Vertical,
+        Horizontal
+    }
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
+
+    private final Setting<BuildMode> buildMode = sgGeneral.add(new EnumSetting.Builder<BuildMode>()
+        .name("build-mode")
+        .description("Vertical builds a wall, Horizontal builds on the ground.")
+        .defaultValue(BuildMode.Vertical)
+        .build()
+    );
 
     private final Setting<List<Block>> blocksToUse = sgGeneral.add(new BlockListSetting.Builder()
         .name("blocks")
@@ -153,7 +165,7 @@ public class AutoBuilder extends Module {
     private Direction buildDirection = Direction.NORTH;
 
     public AutoBuilder() {
-        super(AutoBuilderAddon.CATEGORY, "auto-builder", "Builds vertical 5x5 patterns. Made for 2b2t.");
+        super(AutoBuilderAddon.CATEGORY, "auto-builder", "Builds 5x5 patterns vertically or horizontally. Made for 2b2t.");
     }
 
     @Override
@@ -338,34 +350,79 @@ public class AutoBuilder extends Module {
         if (mc.player == null) return positions;
 
         BlockPos playerPos = mc.player.getBlockPos();
-        int baseY = playerPos.getY() + offsetY.get() + 2;
 
-        for (int row = 0; row < 5; row++) {
-            for (int col = 0; col < 5; col++) {
-                if (grid[row][col]) {
-                    int y = baseY - row;
-                    int horizontalOffset = col - 2; // -2 to +2 for 5x5 grid centered
-                    
-                    int x = playerPos.getX() + offsetX.get();
-                    int z = playerPos.getZ() + offsetZ.get();
-                    
-                    // Apply orientation based on build direction
-                    switch (buildDirection) {
-                        case NORTH -> z += -1; // Build in front (negative Z)
-                        case SOUTH -> z += 1;  // Build in front (positive Z)
-                        case EAST -> x += 1;   // Build in front (positive X)
-                        case WEST -> x += -1;  // Build in front (negative X)
-                        default -> z += -1;
+        if (buildMode.get() == BuildMode.Vertical) {
+            // Vertical mode: builds a wall (X/Z is horizontal, Y is vertical)
+            int baseY = playerPos.getY() + offsetY.get() + 2;
+
+            for (int row = 0; row < 5; row++) {
+                for (int col = 0; col < 5; col++) {
+                    if (grid[row][col]) {
+                        int y = baseY - row;
+                        int horizontalOffset = col - 2; // -2 to +2 for 5x5 grid centered
+                        
+                        int x = playerPos.getX() + offsetX.get();
+                        int z = playerPos.getZ() + offsetZ.get();
+                        
+                        // Apply orientation based on build direction
+                        switch (buildDirection) {
+                            case NORTH -> z += -1;
+                            case SOUTH -> z += 1;
+                            case EAST -> x += 1;
+                            case WEST -> x += -1;
+                            default -> z += -1;
+                        }
+                        
+                        // Apply horizontal offset perpendicular to facing direction
+                        switch (buildDirection) {
+                            case NORTH, SOUTH -> x += horizontalOffset;
+                            case EAST, WEST -> z += horizontalOffset;
+                            default -> x += horizontalOffset;
+                        }
+                        
+                        positions.add(new BlockPos(x, y, z));
                     }
-                    
-                    // Apply horizontal offset perpendicular to facing direction
-                    switch (buildDirection) {
-                        case NORTH, SOUTH -> x += horizontalOffset;
-                        case EAST, WEST -> z += horizontalOffset;
-                        default -> x += horizontalOffset;
+                }
+            }
+        } else {
+            // Horizontal mode: builds on the ground (X/Z plane)
+            int y = playerPos.getY() + offsetY.get();
+
+            for (int row = 0; row < 5; row++) {
+                for (int col = 0; col < 5; col++) {
+                    if (grid[row][col]) {
+                        int forwardOffset = row - 2;  // -2 to +2 (row 0 = behind, row 4 = in front)
+                        int sideOffset = col - 2;     // -2 to +2 (col 0 = left, col 4 = right)
+                        
+                        int x = playerPos.getX() + offsetX.get();
+                        int z = playerPos.getZ() + offsetZ.get();
+                        
+                        // Apply forward/backward offset based on build direction
+                        switch (buildDirection) {
+                            case NORTH -> {
+                                z -= forwardOffset;
+                                x += sideOffset;
+                            }
+                            case SOUTH -> {
+                                z += forwardOffset;
+                                x -= sideOffset;
+                            }
+                            case EAST -> {
+                                x += forwardOffset;
+                                z += sideOffset;
+                            }
+                            case WEST -> {
+                                x -= forwardOffset;
+                                z -= sideOffset;
+                            }
+                            default -> {
+                                z -= forwardOffset;
+                                x += sideOffset;
+                            }
+                        }
+                        
+                        positions.add(new BlockPos(x, y, z));
                     }
-                    
-                    positions.add(new BlockPos(x, y, z));
                 }
             }
         }
